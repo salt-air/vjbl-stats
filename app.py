@@ -27,10 +27,11 @@ def load_and_clean_data(file_path):
         def clean_phase(phase_str):
             p = str(phase_str).lower()
             if "grading 1" in p:
-                if "pool" in p: return "Grading 1 Pool"
                 if "crossover" in p: return "Grading 1 Crossover"
+                return "Grading 1 Pool"
             elif "grading 2" in p:
-                if "pool" in p: return "Grading 2 Pool"
+                if "crossover" in p or "xx pool" in p: return "Grading 2 Crossover"
+                return "Grading 2 Pool"
             return "Other"
         
         df['Phase Category'] = df['phase'].apply(clean_phase)
@@ -98,7 +99,7 @@ def calculate_srs(df):
 st.title("🏀 VJBL U14 Boys: Advanced Analytics Engine")
 
 # Load the local file
-CSV_FILE = 'u14_boys_all_results.csv'
+CSV_FILE = 'u14_boys_all_results-20260221.csv'
 df_raw = load_and_clean_data(CSV_FILE)
 
 if df_raw is not None:
