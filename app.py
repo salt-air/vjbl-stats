@@ -8,41 +8,55 @@ st.set_page_config(page_title="VJBL U14 Boys Analytics Hub", layout="wide")
 
 # --- DATA PROCESSING FUNCTIONS ---
 
-@st.cache_data
+# @st.cache_data(ttl=300)
 def load_and_clean_data(file_path):
-    """Loads and prepares the VJBL dataset with specific date and phase logic."""
+    """Loads and prepares the VJBL dataset with robust date handling."""
     try:
         df = pd.read_csv(file_path)
-        # Clean column names
         df.columns = [c.strip() for c in df.columns]
         
-        # 1. Date Extraction (From "06:40 PM, Friday, 12 Dec 2025")
-        # Split by comma and take the 3rd part (the date)
-        date_raw = df['game_datetime_raw'].str.split(',').str[2].str.strip()
-        df['date_obj'] = pd.to_datetime(date_raw, format='%d %b %Y', errors='coerce')
-        # Create display version: DD-MMM (e.g., 12-Dec)
+        # IMPROVED DATE EXTRACTION
+        # This handles "12 Dec 2025" and the new "27 Feb 26" format
+        def parse_vjbl_date(date_str):
+            try:
+                # Always grab the last part after the final comma
+                clean_date = date_str.split(',')[-1].strip()
+                # Try long year (2025) then short year (26)
+                for fmt in ('%d %b %Y', '%d %b %y'):
+                    try:
+                        return pd.to_datetime(clean_date, format=fmt)
+                    except:
+                        continue
+                return pd.to_datetime(clean_date, errors='coerce')
+            except:
+                return pd.NaT
+
+        df['date_obj'] = df['game_datetime_raw'].apply(parse_vjbl_date)
         df['Display Date'] = df['date_obj'].dt.strftime('%d-%b')
         
-        # 2. Phase Normalization
+        # PHASE NORMALIZATION
         def clean_phase(phase_str):
             p = str(phase_str).lower()
             if "grading 1" in p:
-                if "crossover" in p: return "Grading 1 Crossover"
-                return "Grading 1 Pool"
+                return "Grading 1 Crossover" if "crossover" in p else "Grading 1 Pool"
             elif "grading 2" in p:
-                if "crossover" in p or "xx pool" in p: return "Grading 2 Crossover"
-                return "Grading 2 Pool"
+                return "Grading 2 Crossover" if "crossover" in p or "xx pool" in p else "Grading 2 Pool"
             return "Other"
         
         df['Phase Category'] = df['phase'].apply(clean_phase)
         
-        # 3. Numeric Score Conversion
+        # SCORE CONVERSION
         df['home_score'] = pd.to_numeric(df['home_score'], errors='coerce')
         df['away_score'] = pd.to_numeric(df['away_score'], errors='coerce')
         
-        # Drop rows with missing crucial data
-        df = df.dropna(subset=['home_score', 'away_score', 'date_obj'])
+        # Remove rows that truly have no score, but keep valid dates
+        df = df.dropna(subset=['home_score', 'away_score'])
+        df['margin'] = df['home_score'] - df['away_score']
         
+        return df
+    except Exception as e:
+        st.error(f"Error processing CSV: {e}")
+        return None
         # Add Margin for SRS calculation
         df['margin'] = df['home_score'] - df['away_score']
         
@@ -99,7 +113,7 @@ def calculate_srs(df):
 st.title("🏀 VJBL U14 Boys: Advanced Analytics Engine")
 
 # Load the local file
-CSV_FILE = 'u14_boys_all_results-20260221.csv'
+CSV_FILE = 'u14_boys_all_results.csv'
 df_raw = load_and_clean_data(CSV_FILE)
 
 if df_raw is not None:
@@ -108,6 +122,12 @@ if df_raw is not None:
     
     # Sidebar Navigation
     st.sidebar.header("Navigation")
+    
+    # Manual refresh button in sidebar
+    if st.sidebar.button("🔄 Refresh Data Now"):
+        st.cache_data.clear()
+        st.rerun()
+        
     app_mode = st.sidebar.radio("View", ["Power Rankings", "Team Deep Dive", "Matchup Predictor"])
 
     # Define targets for highlighting
@@ -119,8 +139,8 @@ if df_raw is not None:
         st.header("VJBL Power Rankings (SRS)")
         st.markdown("Rankings are based on score margins adjusted for strength of schedule.")
         
-        # Display table and hide the dataframe's internal index
-        st.dataframe(rankings, use_container_width=True, hide_index=True)
+        # Updated width setting to resolve 2026 deprecation warnings
+        st.dataframe(rankings, width="stretch", hide_index=True)
         
         # Simple viz for top 15
         fig = px.bar(rankings.head(15), x='Team', y='SRS', 
@@ -172,8 +192,8 @@ if df_raw is not None:
         if not team_df.empty:
             log_display = team_df.apply(format_log, axis=1)
             log_display.columns = ['Date', 'Phase', 'Round', 'Opponent', 'Score', 'Result']
-            # Display sorted table and hide index
-            st.dataframe(log_display, use_container_width=True, hide_index=True)
+            # Updated width setting to resolve 2026 deprecation warnings
+            st.dataframe(log_display, width="stretch", hide_index=True)
         else:
             st.warning("No game data found for this team.")
 
