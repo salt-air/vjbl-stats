@@ -172,29 +172,54 @@ if df_raw is not None and not df_raw.empty:
             selected_idx = event.selection.rows[0]
             selected_team_name = rankings.iloc[selected_idx]['Team']
             st.session_state.selected_team = selected_team_name
+            st.session_state.selected_team = selected_team_name
             st.session_state.page = "Team Deep Dive"
+            # REMOVE the nav_radio line that caused the crash
             st.rerun()
 
     # --- MODE 2: LEAGUE LADDERS (NEW) ---
     elif app_mode == "League Ladders (New)":
         st.header("Official League Ladders vs Power Rankings")
         st.write("Compare actual standings (Points & %) against the predictive Power Rank.")
+        st.markdown("*Click a team row to view their **Team Deep Dive**.*") # Added instruction
         
         if ladders.empty:
-            st.warning("No official season games found yet. Only Grading games exist in the dataset.")
+            st.warning("No official season games found.")
         else:
             leagues = sorted(ladders['League'].unique())
-            selected_league = st.selectbox("Select League/Phase", leagues)
+            
+            # NEW: Determine the default index based on the phase we just clicked
+            default_ix = 0
+            if 'target_phase' in st.session_state and st.session_state.target_phase in leagues:
+                default_ix = leagues.index(st.session_state.target_phase)
+                # Clear it after use so it doesn't "stick" forever
+                del st.session_state.target_phase 
+
+            selected_league = st.selectbox("Select League/Phase", leagues, index=default_ix)
             
             if selected_league:
                 league_ladder = ladders[ladders['League'] == selected_league].copy()
                 league_ladder = league_ladder.sort_values(by=['Pts', '%'], ascending=[False, False]).reset_index(drop=True)
                 league_ladder.insert(0, 'Pos', range(1, len(league_ladder) + 1))
                 
-                st.dataframe(
+                # Assign to a variable to capture the selection event
+                ladder_event = st.dataframe(
                     league_ladder[['Pos', 'Team', 'Pld', 'W', 'L', 'D', 'PF', 'PA', '%', 'Pts', 'Power Rank']], 
-                    hide_index=True, use_container_width=True
+                    hide_index=True, 
+                    use_container_width=True,
+                    selection_mode="single-row", # Enable selection
+                    on_select="rerun"           # Trigger rerun on click
                 )
+
+                # Handle the click event
+                if ladder_event and len(ladder_event.selection.rows) > 0:
+                    selected_idx = ladder_event.selection.rows[0]
+                    selected_team_name = league_ladder.iloc[selected_idx]['Team']
+                    
+                    st.session_state.selected_team = selected_team_name
+                    st.session_state.page = "Team Deep Dive"
+                    # REMOVE the nav_radio line that caused the crash
+                    st.rerun()
 
     # --- MODE 3: CLUB OVERVIEW ---
     elif app_mode == "Club Overview":
@@ -265,23 +290,55 @@ if df_raw is not None and not df_raw.empty:
         st.metric("Global Power Rank", f"#{t_data['Ranking']}", delta=f"SRS: {t_data['SRS']:.2f}")
         
         hist = df_raw[(df_raw['home_team'] == sel_team) | (df_raw['away_team'] == sel_team)].copy()
-        
+              
         if not hist.empty:
-            hist['Result'] = hist.apply(lambda row: style_game_result(row, sel_team), axis=1)
-            hist['Opponent'] = np.where(hist['home_team'] == sel_team, hist['away_team'], hist['home_team'])
-            hist['Tm Pts'] = np.where(hist['home_team'] == sel_team, hist['home_score'], hist['away_score'])
-            hist['Opp Pts'] = np.where(hist['home_team'] == sel_team, hist['away_score'], hist['home_score'])
-            
-            hist = hist.sort_values('Date', ascending=False)
-            
-            st.dataframe(
-                hist[['Date', 'Result', 'Tm Pts', 'Opp Pts', 'Opponent', 'phase']], 
-                hide_index=True, 
+                # --- NEW: SORT BY DATE DESCENDING ---
+                hist = hist.sort_values(by='Date', ascending=False)
+                
+                # CREATE MISSING COLUMNS DYNAMICALLY
+                hist['Tm Pts'] = hist.apply(lambda x: x['home_score'] if x['home_team'] == sel_team else x['away_score'], axis=1)
+                hist['Opp Pts'] = hist.apply(lambda x: x['away_score'] if x['home_team'] == sel_team else x['home_score'], axis=1)
+                hist['Opponent'] = hist.apply(lambda x: x['away_team'] if x['home_team'] == sel_team else x['home_team'], axis=1)
+                hist['Result'] = hist.apply(lambda x: style_game_result(x, sel_team), axis=1)
+
+                st.write("### Game History")
+                st.markdown("*Click a **Phase** row to return to that League's ladder.*")
+                
+                history_event = st.dataframe(
+                    hist[['Date', 'Result', 'Tm Pts', 'Opp Pts', 'Opponent', 'phase']], 
+                    hide_index=True, 
+                    # ... rest of your code ...
                 use_container_width=True,
+                selection_mode="single-row",
+                on_select="rerun",
                 column_config={
                     "Date": st.column_config.DateColumn("Match Date", format="DD MMM YYYY")
                 }
             )
+
+        # Logic to redirect back to Ladders
+        if history_event and len(history_event.selection.rows) > 0:
+            row_idx = history_event.selection.rows[0]
+            clicked_phase = hist.iloc[row_idx]['phase']
+            
+            if "Grading" not in clicked_phase:
+                # NEW: Store the phase to load it automatically on the next page
+                st.session_state.target_phase = clicked_phase 
+                st.session_state.page = "League Ladders (New)"
+                st.rerun()
+
+        # Logic to redirect back to Ladders
+        if history_event and len(history_event.selection.rows) > 0:
+            row_idx = history_event.selection.rows[0]
+            clicked_phase = hist.iloc[row_idx]['phase']
+            
+            # Only redirect if it's NOT a grading game
+            if "Grading" not in clicked_phase:
+                st.session_state.page = "League Ladders (New)"
+                st.session_state.nav_radio = "League Ladders (New)"
+                # Optional: You could also store clicked_phase in session_state 
+                # to auto-select it in the Ladder dropdown!
+                st.rerun()
 
     # --- MODE 6: MATCHUP PREDICTOR ---
     elif app_mode == "Matchup Predictor":
